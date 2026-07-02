@@ -1,0 +1,17 @@
+# Environments
+venv/
+env/
+.env
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data and Logs
+input.txt
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
