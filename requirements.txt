@@ -1,8 +1,6 @@
-# Core dependencies for clustering (Phase 1)
-numpy
-scikit-learn
-sentence-transformers
-
+scikit-learn>=1.4
+numpy>=1.26
+sentence-transformers>=3.0
 # Dependencies for LLM Generation (Phase 2)
 python-dotenv
-openai
+

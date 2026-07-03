@@ -40,7 +40,7 @@ def embed_chunks_tfidf(chunks, n_components=50):
     return normalize(reduced)
 
 
-def embed_chunks_sbert(chunks, model_name="all-MiniLM-L6-v2"):
+def embed_chunks_sbert(chunks, model_name="nvidia/llama-nemotron-embed-vl-1b-v2:free"):
     """
     Real semantic embedder via sentence-transformers. Requires internet
     access to huggingface.co to download the model on first run - use
@@ -53,7 +53,7 @@ def embed_chunks_sbert(chunks, model_name="all-MiniLM-L6-v2"):
     return np.array(embeddings)
 
 
-def embed_chunks(chunks, embedder="tfidf", model_name="all-MiniLM-L6-v2"):
+def embed_chunks(chunks, embedder="tfidf", model_name="nvidia/llama-nemotron-embed-vl-1b-v2:free"):
     if embedder == "sbert":
         return embed_chunks_sbert(chunks, model_name)
     return embed_chunks_tfidf(chunks)

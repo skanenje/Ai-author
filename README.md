@@ -1,49 +1,72 @@
-# AI Author: Chat to Book Pipeline
+# chat2book — Phase 1 (ingest → chunk → embed → cluster)
 
-This project is a standalone tool designed to transform long, unstructured conversational transcripts (e.g., from ChatGPT or Claude) into a coherent, structured book. Unlike basic summary tools, this pipeline focuses on structure extraction, theme clustering, and maintaining authorial voice across generated chapters.
+Zero-LLM-cost pipeline stage. Goal: prove the corpus splits into
+human-recognizable themes before spending any generation budget on
+outlines or chapters.
 
-## Project Structure
-- **`cluster_themes.py`**: Phase 1 script. Ingests a chat log, chunks the exchanges, runs embeddings, and clusters them into distinct themes.
-- **`ingest.py`**: Parses exported chat logs (JSON or Markdown) into turn-by-turn conversational chunks.
-- **`chunker.py`**: Groups logical back-and-forths together into semantic chunks.
-- **`llm.py`**: Phase 2 module. Handles the connection to the OpenRouter inference engine for generating chapters.
-- **`sample_export.json`**: A synthetic test corpus featuring four distinct topics for validating the clustering logic.
+## Setup (your machine, conda env `ex00`)
 
-## Setup Instructions
-
-### 1. Create a Virtual Environment (Recommended)
-To avoid system-wide package conflicts (PEP 668), it is highly recommended to use a virtual environment.
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-
-### 2. Install Dependencies
-Install the required packages from `requirements.txt`:
-```bash
+conda activate ex00
+cd ~/chat2book        # wherever you place this folder
 pip install -r requirements.txt
 ```
 
-### 3. Configure API Keys
-The project uses `.env` to store your API keys and model choices safely.
-1. Make sure you have the `.env` file in the root of the project.
-2. Edit `.env` and replace `"your_openrouter_api_key_here"` with your actual OpenRouter API Key.
+If `conda activate ex00` doesn't take inside a script/non-interactive
+shell (the issue you hit on Orca), either run `conda init bash` once
+and restart the shell, or use `conda run -n ex00 python cluster_themes.py ...`
+directly instead of activating first.
 
----
+The first run of `sentence-transformers` will download the
+`all-MiniLM-L6-v2` model (~90MB) from huggingface.co — this needs
+real internet access, which is why it can't run in the sandboxed
+environment I tested in.
 
-## How to Run
+## Getting your real corpus
 
-### Phase 1: Validating Theme Clustering
-To test if the pipeline can successfully ingest a chat and separate it into logical themes *without* spending money on LLM calls, run:
+1. In claude.ai: Settings → Privacy → Export data. You'll get an
+   emailed download link to a ZIP containing `conversations.json`
+   (all your conversations, not just one).
+2. Unzip it, then inspect the structure before trusting any adapter:
+
+   ```bash
+   python inspect_export.py --path conversations.json --title "Islamic"
+   ```
+
+   This prints the actual key names Anthropic uses for role/content
+   in your export so we can write `convert_claude_export.py` to match
+   reality instead of guessing. Send me that output (or just the
+   printed keys) and I'll write the adapter to match.
+
+3. Once converted to the simple format `ingest.py` expects —
+   `[{"role": "user"|"assistant", "content": "..."}, ...]` — you're
+   ready to run the real pipeline.
+
+## Running with real semantic embeddings
+
 ```bash
-python3 cluster_themes.py --input input.txt --n-clusters 8
-
+python cluster_themes.py --input your_theology_chat.json --n-clusters 8 --embedder sbert
 ```
-This will output a summary of the themes it discovered within the synthetic test corpus.
 
-### Phase 2: Testing LLM Inference
-To verify that your OpenRouter connection is working and ready to draft chapters, run the LLM tester directly:
-```bash
-python llm.py
-```
-If properly configured, this will print a generated response using the free Llama-3 8B model.
+Start with `--n-clusters` roughly equal to how many chapters you'd
+guess the book needs, then adjust after reading the keyword/excerpt
+report — too few clusters merges distinct arguments together, too
+many fragments a single argument across clusters.
+
+## What "good" looks like
+
+Each cluster's keyword list and representative excerpt should read as
+one coherent sub-topic. If two clusters look like they're circling the
+same idea, lower `--n-clusters`. If one cluster's excerpt reads like
+it's straddling two unrelated arguments, raise it.
+
+## Files
+
+- `ingest.py` — parses chat export into normalized turns
+- `chunker.py` — merges turns into exchange-level chunks
+- `cluster_themes.py` — embed + cluster + report (this is the one you run)
+- `inspect_export.py` — peek at official export structure before adapting it
+- `sample_export.json` — synthetic 4-topic test corpus (already validated
+  the plumbing works end-to-end; ML/IT topics only separated cleanly once
+  real embeddings replaced the TF-IDF fallback — that's the whole point
+  of running this with `--embedder sbert`)

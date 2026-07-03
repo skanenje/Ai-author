@@ -1,59 +1,66 @@
-import json
-import os
+"""
+ingest.py - Parse chat exports into a normalized list of turns.
 
-def load_export(input_path):
-    """
-    Load an exported chat transcript and parse it into turns.
-    Each turn should be a dictionary with 'role' (e.g. 'user', 'assistant') and 'text'.
-    """
-    if not os.path.exists(input_path):
-        raise FileNotFoundError(f"File not found: {input_path}")
-        
-    _, ext = os.path.splitext(input_path.lower())
-    
-    if ext == '.json':
-        with open(input_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            # Adapt this logic based on actual export formats (e.g. ChatGPT, Claude)
-            # For now, assume it's a simple list of dicts: [{'role': 'user', 'text': '...'}]
-            return data
-    elif ext in ['.md', '.txt']:
-        # Basic parsing for markdown/text dumps
-        turns = []
-        with open(input_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-            
-        # Check if it has explicit role markers
-        if 'User:' in content or 'Human:' in content:
-            lines = content.split('\n')
-            current_role = None
-            current_text = []
-            
-            for line in lines:
-                if line.startswith('User:') or line.startswith('Human:'):
-                    if current_role:
-                        turns.append({"role": current_role, "text": '\n'.join(current_text).strip()})
-                    current_role = 'user'
-                    current_text = [line.split(':', 1)[1].strip()]
-                elif line.startswith('Assistant:') or line.startswith('AI:'):
-                    if current_role:
-                        turns.append({"role": current_role, "text": '\n'.join(current_text).strip()})
-                    current_role = 'assistant'
-                    current_text = [line.split(':', 1)[1].strip()]
-                elif current_role:
-                    current_text.append(line)
-            
-            if current_role and current_text:
-                turns.append({"role": current_role, "text": '\n'.join(current_text).strip()})
-        else:
-            # Unstructured raw text dump (like a UI copy-paste)
-            # Split by double-newlines to get semantic paragraphs
-            blocks = content.split('\n\n')
-            for block in blocks:
-                block = block.strip()
-                if block and block != 'Show more':
-                    turns.append({"role": "unknown", "text": block})
-                    
-        return turns
-    else:
-        raise ValueError(f"Unsupported file extension: {ext}")
+Supports two input formats:
+  - JSON: a list of {"role": "user"|"assistant", "content": "..."} objects
+  - Markdown/plain text: lines prefixed with a role marker, e.g.
+      Human: ...
+      Assistant: ...
+    or
+      **User:** ...
+      **Claude:** ...
+"""
+
+import json
+import re
+from pathlib import Path
+from typing import List, Dict
+
+ROLE_MARKERS = {
+    "human": "user",
+    "user": "user",
+    "you": "user",
+    "assistant": "assistant",
+    "claude": "assistant",
+    "ai": "assistant",
+}
+
+TURN_SPLIT_RE = re.compile(
+    r"^\s*\**\s*(Human|User|You|Assistant|Claude|AI)\s*:\**\s*",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def load_json_export(path: Path) -> List[Dict]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    turns = []
+    for item in data:
+        role = str(item.get("role", "")).lower()
+        content = str(item.get("content", "")).strip()
+        if not content:
+            continue
+        norm_role = ROLE_MARKERS.get(role, role)
+        turns.append({"role": norm_role, "content": content})
+    return turns
+
+
+def load_markdown_export(path: Path) -> List[Dict]:
+    text = path.read_text(encoding="utf-8")
+    matches = list(TURN_SPLIT_RE.finditer(text))
+    turns = []
+    for i, m in enumerate(matches):
+        role_raw = m.group(1).lower()
+        role = ROLE_MARKERS.get(role_raw, role_raw)
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        content = text[start:end].strip()
+        if content:
+            turns.append({"role": role, "content": content})
+    return turns
+
+
+def load_export(path: str) -> List[Dict]:
+    p = Path(path)
+    if p.suffix.lower() == ".json":
+        return load_json_export(p)
+    return load_markdown_export(p)
