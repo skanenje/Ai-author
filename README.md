@@ -42,10 +42,12 @@ environment I tested in.
    `[{"role": "user"|"assistant", "content": "..."}, ...]` — you're
    ready to run the real pipeline.
 
-## Running with real semantic embeddings
+## Running the pipeline
+
+You can run the pipeline with a JSON export or a plain text file like `input.txt`:
 
 ```bash
-python cluster_themes.py --input your_theology_chat.json --n-clusters 8 --embedder sbert
+python cluster_themes.py --input input.txt --n-clusters 8
 ```
 
 Start with `--n-clusters` roughly equal to how many chapters you'd
