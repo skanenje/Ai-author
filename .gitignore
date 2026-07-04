@@ -15,3 +15,14 @@ input.txt
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Claude.ai data exports (large, personal)
+conversations.json
+memories.json
+users.json
+
+# Scratch / debug scripts
+_*.py
+
+# Output files
+*.json.out

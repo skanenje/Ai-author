@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import sys
 from collections import defaultdict
 
 import numpy as np
@@ -32,7 +33,8 @@ def embed_chunks_tfidf(chunks, n_components=50):
     committing to a heavier embedding model.
     """
     texts = [c["text"] for c in chunks]
-    n_components = min(n_components, len(texts) - 1, 100)
+    # n_components must be >= 1 and strictly < n_samples
+    n_components = max(1, min(n_components, len(texts) - 1, 100))
     vectorizer = TfidfVectorizer(stop_words="english", max_features=5000)
     tfidf = vectorizer.fit_transform(texts)
     svd = TruncatedSVD(n_components=n_components, random_state=42)
@@ -89,14 +91,40 @@ def representative_chunk(chunks, embeddings, indices):
     return chunks[best]
 
 
-def run(input_path, n_clusters, model_name):
+def run(input_path, n_clusters, embedder, model_name):
     turns = load_export(input_path)
     exchanges = build_exchanges(turns)
     chunks = chunks_from_exchanges(exchanges)
 
-    print(f"Parsed {len(turns)} turns -> {len(exchanges)} exchanges -> {len(chunks)} chunks\n")
+    print(f"Parsed {len(turns)} turns -> {len(exchanges)} exchanges -> {len(chunks)} chunks")
+    print(f"Embedder: {embedder}\n")
 
-    embeddings = embed_chunks(chunks, model_name)
+    if not chunks:
+        sys.exit(
+            "Error: no chunks produced.\n"
+            "Check that your input file contains recognisable turn markers\n"
+            "(e.g. 'Human:' / 'Assistant:' or 'User:' / 'Claude:') or is\n"
+            "valid JSON with 'role' and 'content' fields."
+        )
+
+    # AgglomerativeClustering requires at least 2 samples
+    if len(chunks) < 2:
+        sys.exit(
+            f"Error: only {len(chunks)} chunk(s) found - need at least 2 to cluster.\n"
+            "Your input file may not be using a recognised turn-marker format.\n"
+            "Supported plain-text prefixes: Human/User/You (user) and\n"
+            "Assistant/Claude/AI (assistant), optionally wrapped in ** **.\n"
+            "Alternatively convert your export to JSON format."
+        )
+
+    if n_clusters > len(chunks):
+        print(
+            f"Warning: --n-clusters {n_clusters} > number of chunks ({len(chunks)}). "
+            f"Reducing to {len(chunks)}.\n"
+        )
+        n_clusters = len(chunks)
+
+    embeddings = embed_chunks(chunks, embedder=embedder, model_name=model_name)
     labels = cluster_embeddings(embeddings, n_clusters)
 
     clusters = defaultdict(list)
@@ -105,13 +133,13 @@ def run(input_path, n_clusters, model_name):
 
     print(f"Formed {len(clusters)} theme clusters:\n")
     for label in sorted(clusters):
-        indices = clusters[label]
+        indices = np.array(clusters[label])
         cluster_texts = [chunks[i]["text"] for i in indices]
         keywords = top_keywords(cluster_texts)
         rep = representative_chunk(chunks, embeddings, indices)
 
         print(f"--- Cluster {label} ({len(indices)} chunks) ---")
-        print(f"Keywords: {', '.join(keywords) if keywords else 'n/a'} ")
+        print(f"Keywords: {', '.join(keywords) if keywords else 'n/a'}")
         excerpt = rep["text"][:220].replace("\n", " ")
         print(f"Representative excerpt: {excerpt}...")
         print()
@@ -121,6 +149,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True, help="Path to chat export (.json or .md/.txt)")
     parser.add_argument("--n-clusters", type=int, default=6, help="Number of theme clusters to form")
-    parser.add_argument("--model", default="all-MiniLM-L6-v2", help="sentence-transformers model name")
+    parser.add_argument("--embedder", choices=["tfidf", "sbert"], default="tfidf",
+                         help="tfidf = offline fallback, sbert = real semantic embeddings (needs internet)")
+    parser.add_argument("--model", default="all-MiniLM-L6-v2", help="sentence-transformers model name (sbert only)")
     args = parser.parse_args()
-    run(args.input, args.n_clusters, args.model)
+    run(args.input, args.n_clusters, args.embedder, args.model)

@@ -1,74 +1,115 @@
-# chat2book — Phase 1 (ingest → chunk → embed → cluster)
+# chat2book
 
-Zero-LLM-cost pipeline stage. Goal: prove the corpus splits into
-human-recognizable themes before spending any generation budget on
-outlines or chapters.
+Convert long AI conversations into structured nonfiction book material.
 
-## Setup (your machine, conda env `ex00`)
+> **Phase 1 (current):** Ingest → chunk → embed → cluster  
+> Zero LLM cost. Proves the corpus splits into human-recognizable themes
+> before spending any generation budget on outlines or chapter drafts.
+
+---
+
+## Setup
 
 ```bash
 conda activate ex00
-cd ~/chat2book        # wherever you place this folder
+cd ~/projects/Ai-author
 pip install -r requirements.txt
 ```
 
-If `conda activate ex00` doesn't take inside a script/non-interactive
-shell (the issue you hit on Orca), either run `conda init bash` once
-and restart the shell, or use `conda run -n ex00 python cluster_themes.py ...`
-directly instead of activating first.
-
-The first run of `sentence-transformers` will download the
-`all-MiniLM-L6-v2` model (~90MB) from huggingface.co — this needs
-real internet access, which is why it can't run in the sandboxed
-environment I tested in.
-
-## Getting your real corpus
-
-1. In claude.ai: Settings → Privacy → Export data. You'll get an
-   emailed download link to a ZIP containing `conversations.json`
-   (all your conversations, not just one).
-2. Unzip it, then inspect the structure before trusting any adapter:
-
-   ```bash
-   python inspect_export.py --path conversations.json --title "Islamic"
-   ```
-
-   This prints the actual key names Anthropic uses for role/content
-   in your export so we can write `convert_claude_export.py` to match
-   reality instead of guessing. Send me that output (or just the
-   printed keys) and I'll write the adapter to match.
-
-3. Once converted to the simple format `ingest.py` expects —
-   `[{"role": "user"|"assistant", "content": "..."}, ...]` — you're
-   ready to run the real pipeline.
-
-## Running the pipeline
-
-You can run the pipeline with a JSON export or a plain text file like `input.txt`:
+If `conda activate` fails in a non-interactive shell, call the env python directly:
 
 ```bash
-python cluster_themes.py --input input.txt --n-clusters 8
+/home/swapo/miniconda3/envs/ex00/bin/python cluster_themes.py --input input.txt --n-clusters 8
 ```
 
-Start with `--n-clusters` roughly equal to how many chapters you'd
-guess the book needs, then adjust after reading the keyword/excerpt
-report — too few clusters merges distinct arguments together, too
-many fragments a single argument across clusters.
+---
 
-## What "good" looks like
+## Workflow
 
-Each cluster's keyword list and representative excerpt should read as
-one coherent sub-topic. If two clusters look like they're circling the
-same idea, lower `--n-clusters`. If one cluster's excerpt reads like
-it's straddling two unrelated arguments, raise it.
+### 1. Prepare your input
 
-## Files
+**Option A — copy-paste (simplest)**
 
-- `ingest.py` — parses chat export into normalized turns
-- `chunker.py` — merges turns into exchange-level chunks
-- `cluster_themes.py` — embed + cluster + report (this is the one you run)
-- `inspect_export.py` — peek at official export structure before adapting it
-- `sample_export.json` — synthetic 4-topic test corpus (already validated
-  the plumbing works end-to-end; ML/IT topics only separated cleanly once
-  real embeddings replaced the TF-IDF fallback — that's the whole point
-  of running this with `--embedder sbert`)
+Copy a conversation from Claude.ai and paste it into a `.txt` file.
+The parser auto-detects the format (the `Show more` separators Claude.ai inserts).
+
+**Option B — official JSON export**
+
+Download from *Settings → Privacy → Export data*, unzip, then:
+
+```bash
+EXPORT=~/Downloads/.../conversations.json
+
+# List all conversations
+python parse_export.py --export $EXPORT list
+
+# Search by name keyword
+python parse_export.py --export $EXPORT list --search Islamic
+
+# Preview a conversation (first 6 turns)
+python parse_export.py --export $EXPORT preview --index 465
+
+# Extract one conversation -> ready for cluster_themes.py
+python parse_export.py --export $EXPORT extract --index 465 --out conv.json
+
+# Merge ALL conversations into one corpus file
+python parse_export.py --export $EXPORT extract --all --out corpus.json
+```
+
+### 2. Run the clustering pipeline
+
+```bash
+# Copy-paste .txt file
+python cluster_themes.py --input input.txt --n-clusters 8
+
+# Extracted .json file
+python cluster_themes.py --input conv.json --n-clusters 6
+```
+
+### 3. Tune the cluster count
+
+Each cluster prints a keyword list and a representative excerpt.
+
+| Symptom | Fix |
+|---|---|
+| Two clusters look like the same topic | Lower `--n-clusters` |
+| One cluster mixes unrelated ideas | Raise `--n-clusters` |
+
+Start near your expected chapter count and adjust from there.
+
+---
+
+## Embedder options
+
+| Flag | Model | Notes |
+|---|---|---|
+| `--embedder tfidf` | TF-IDF + SVD | **Default.** Fully offline. |
+| `--embedder sbert` | all-MiniLM-L6-v2 | Better clusters. Downloads ~90 MB on first run. |
+
+Use `tfidf` for a fast sanity check; switch to `sbert` when you want final chapter assignments.
+
+---
+
+## Project files
+
+| File | Purpose |
+|---|---|
+| `ingest.py` | Parse any supported format into normalised turns |
+| `chunker.py` | Group turns into overlapping text chunks (auto paragraph-splits long responses) |
+| `cluster_themes.py` | Embed + cluster + print theme report ← **run this** |
+| `parse_export.py` | Browse and extract from `conversations.json` export |
+| `llm.py` | LLM client stub (Phase 2 — chapter drafting, not yet used) |
+| `requirements.txt` | Python dependencies |
+| `.env` | API keys (gitignored) |
+
+---
+
+## Supported input formats
+
+`ingest.py` auto-detects all three:
+
+| Format | Detection trigger | How to produce |
+|---|---|---|
+| Claude.ai copy-paste `.txt` | `Show more` separator lines | Copy conversation from browser, paste to file |
+| Role-marker `.txt` | `Human:` / `Assistant:` prefixes | Any chat log with role labels |
+| Extracted `.json` | File extension | Output of `parse_export.py extract` |

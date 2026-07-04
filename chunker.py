@@ -1,129 +1,135 @@
 """
-cluster_themes.py - Phase 1 of the chat-to-book pipeline.
+chunker.py - Group turns into exchanges and split into overlapping chunks.
 
-Ingest -> chunk -> embed -> cluster -> print a theme report.
-
-No LLM calls in this phase. The goal is purely to validate that
-clustering produces human-recognizable themes before spending any
-generation budget on outlines or chapter drafts.
-
-Usage:
-    python cluster_themes.py --input sample_export.json --n-clusters 4
+Two chunking modes:
+  exchange mode  (default): sliding window across exchanges.
+  paragraph mode (auto when any turn > LONG_TURN_CHARS chars):
+      Turns split on blank lines first, then windowed across paragraphs.
+      Handles very long assistant responses in copy-pasted conversations.
 """
 
-import argparse
-from collections import defaultdict
+from typing import List, Dict
+import re
 
-import numpy as np
-from sklearn.cluster import AgglomerativeClustering
-from sklearn.decomposition import TruncatedSVD
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.preprocessing import normalize
-
-from ingest import load_export
-from chunker import build_exchanges, chunks_from_exchanges
+LONG_TURN_CHARS = 4000
+PARA_SPLIT_RE   = re.compile(r"\n{2,}")
 
 
-def embed_chunks_tfidf(chunks, n_components=50):
+def build_exchanges(turns: List[Dict]) -> List[Dict]:
+    """Pair consecutive user/assistant turns into exchange dicts."""
+    exchanges: List[Dict] = []
+    i = 0
+    while i < len(turns):
+        turn    = turns[i]
+        role    = turn.get("role", "")
+        content = turn.get("content", "").strip()
+        if role == "user":
+            if i + 1 < len(turns) and turns[i + 1].get("role") == "assistant":
+                exchanges.append({
+                    "user":      content,
+                    "assistant": turns[i + 1].get("content", "").strip(),
+                    "index":     len(exchanges),
+                })
+                i += 2
+            else:
+                exchanges.append({"user": content, "assistant": "", "index": len(exchanges)})
+                i += 1
+        elif role == "assistant":
+            exchanges.append({"user": "", "assistant": content, "index": len(exchanges)})
+            i += 1
+        else:
+            i += 1
+    return exchanges
+
+
+def _split_paragraphs(text: str, min_chars: int = 120) -> List[str]:
+    """Split on blank lines, merging short fragments into neighbours."""
+    raw    = [p.strip() for p in PARA_SPLIT_RE.split(text) if p.strip()]
+    merged: List[str] = []
+    buf    = ""
+    for para in raw:
+        buf = (buf + chr(10)*2 + para).strip() if buf else para
+        if len(buf) >= min_chars:
+            merged.append(buf)
+            buf = ""
+    if buf:
+        if merged:
+            merged[-1] += chr(10)*2 + buf
+        else:
+            merged.append(buf)
+    return merged
+
+
+def _exchange_to_text(ex: Dict) -> str:
+    parts = []
+    if ex.get("user"):      parts.append("User: "      + ex["user"])
+    if ex.get("assistant"): parts.append("Assistant: " + ex["assistant"])
+    return chr(10).join(parts)
+
+
+def _needs_paragraph_mode(exchanges: List[Dict], threshold: int = LONG_TURN_CHARS) -> bool:
+    for ex in exchanges:
+        if len(ex.get("user", "")) > threshold or len(ex.get("assistant", "")) > threshold:
+            return True
+    return False
+
+
+def _paragraph_chunks(exchanges, window, stride, min_chars):
+    paras: List[Dict] = []
+    for ex in exchanges:
+        idx = ex["index"]
+        if ex.get("user"):
+            for p in _split_paragraphs(ex["user"]):
+                paras.append({"text": "User: " + p, "exchange_index": idx})
+        if ex.get("assistant"):
+            for p in _split_paragraphs(ex["assistant"]):
+                paras.append({"text": "Assistant: " + p, "exchange_index": idx})
+    chunks: List[Dict] = []
+    n = len(paras)
+    for start in range(0, n, stride):
+        end  = min(start + window, n)
+        win  = paras[start:end]
+        text = (chr(10)*2).join(p["text"] for p in win).strip()
+        if len(text) >= min_chars:
+            chunks.append({
+                "text":        text,
+                "start_index": win[0]["exchange_index"],
+                "end_index":   win[-1]["exchange_index"],
+            })
+        if end == n:
+            break
+    return chunks
+
+
+def chunks_from_exchanges(
+    exchanges  : List[Dict],
+    window     : int = 3,
+    stride     : int = 1,
+    min_chars  : int = 50,
+    para_window: int = 5,
+    para_stride: int = 2,
+) -> List[Dict]:
     """
-    Offline fallback embedder: TF-IDF + truncated SVD (LSA).
-    No model download required - useful for environments without
-    access to huggingface.co, or as a zero-cost sanity check before
-    committing to a heavier embedding model.
+    Produce overlapping text chunks. Auto-switches to paragraph mode
+    when any turn exceeds LONG_TURN_CHARS characters.
+    Each chunk: {"text": str, "start_index": int, "end_index": int}
     """
-    texts = [c["text"] for c in chunks]
-    n_components = min(n_components, len(texts) - 1, 100)
-    vectorizer = TfidfVectorizer(stop_words="english", max_features=5000)
-    tfidf = vectorizer.fit_transform(texts)
-    svd = TruncatedSVD(n_components=n_components, random_state=42)
-    reduced = svd.fit_transform(tfidf)
-    return normalize(reduced)
-
-
-def embed_chunks_sbert(chunks, model_name="all-MiniLM-L6-v2"):
-    """
-    Real semantic embedder via sentence-transformers. Requires internet
-    access to huggingface.co to download the model on first run - use
-    this on your own machine, not in a network-restricted sandbox.
-    """
-    from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer(model_name)
-    texts = [c["text"] for c in chunks]
-    embeddings = model.encode(texts, show_progress_bar=False, normalize_embeddings=True)
-    return np.array(embeddings)
-
-
-def embed_chunks(chunks, embedder="tfidf", model_name="all-MiniLM-L6-v2"):
-    if embedder == "sbert":
-        return embed_chunks_sbert(chunks, model_name)
-    return embed_chunks_tfidf(chunks)
-
-
-def cluster_embeddings(embeddings, n_clusters):
-    clustering = AgglomerativeClustering(
-        n_clusters=n_clusters,
-        metric="cosine",
-        linkage="average",
-    )
-    return clustering.fit_predict(embeddings)
-
-
-def top_keywords(texts, top_n=6):
-    if len(texts) < 2:
+    if not exchanges:
         return []
-    vectorizer = TfidfVectorizer(stop_words="english", max_features=2000)
-    tfidf = vectorizer.fit_transform(texts)
-    scores = np.asarray(tfidf.sum(axis=0)).ravel()
-    terms = np.array(vectorizer.get_feature_names_out())
-    top_idx = scores.argsort()[::-1][:top_n]
-    return terms[top_idx].tolist()
-
-
-def representative_chunk(chunks, embeddings, indices):
-    group_embeddings = embeddings[indices]
-    centroid = group_embeddings.mean(axis=0)
-    sims = group_embeddings @ centroid / (
-        np.linalg.norm(group_embeddings, axis=1) * np.linalg.norm(centroid) + 1e-9
-    )
-    best = indices[int(np.argmax(sims))]
-    return chunks[best]
-
-
-def run(input_path, n_clusters, embedder, model_name):
-    turns = load_export(input_path)
-    exchanges = build_exchanges(turns)
-    chunks = chunks_from_exchanges(exchanges)
-
-    print(f"Parsed {len(turns)} turns -> {len(exchanges)} exchanges -> {len(chunks)} chunks")
-    print(f"Embedder: {embedder}\n")
-
-    embeddings = embed_chunks(chunks, embedder=embedder, model_name=model_name)
-    labels = cluster_embeddings(embeddings, n_clusters)
-
-    clusters = defaultdict(list)
-    for idx, label in enumerate(labels):
-        clusters[label].append(idx)
-
-    print(f"Formed {len(clusters)} theme clusters:\n")
-    for label in sorted(clusters):
-        indices = clusters[label]
-        cluster_texts = [chunks[i]["text"] for i in indices]
-        keywords = top_keywords(cluster_texts)
-        rep = representative_chunk(chunks, embeddings, indices)
-
-        print(f"--- Cluster {label} ({len(indices)} chunks) ---")
-        print(f"Keywords: {', '.join(keywords) if keywords else 'n/a'}")
-        excerpt = rep["text"][:220].replace("\n", " ")
-        print(f"Representative excerpt: {excerpt}...")
-        print()
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input", required=True, help="Path to chat export (.json or .md/.txt)")
-    parser.add_argument("--n-clusters", type=int, default=6, help="Number of theme clusters to form")
-    parser.add_argument("--embedder", choices=["tfidf", "sbert"], default="tfidf",
-                         help="tfidf = offline fallback, sbert = real semantic embeddings (needs internet)")
-    parser.add_argument("--model", default="all-MiniLM-L6-v2", help="sentence-transformers model name (sbert only)")
-    args = parser.parse_args()
-    run(args.input, args.n_clusters, args.embedder, args.model)
+    if _needs_paragraph_mode(exchanges):
+        return _paragraph_chunks(exchanges, para_window, para_stride, min_chars)
+    chunks: List[Dict] = []
+    n = len(exchanges)
+    for start in range(0, n, stride):
+        end  = min(start + window, n)
+        win  = exchanges[start:end]
+        text = (chr(10)*2).join(_exchange_to_text(e) for e in win).strip()
+        if len(text) >= min_chars:
+            chunks.append({
+                "text":        text,
+                "start_index": win[0]["index"],
+                "end_index":   win[-1]["index"],
+            })
+        if end == n:
+            break
+    return chunks
