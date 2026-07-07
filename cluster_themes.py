@@ -19,6 +19,7 @@ Usage:
 """
 
 import argparse
+import json
 from collections import defaultdict
 
 import numpy as np
@@ -139,7 +140,7 @@ def representative_chunk(chunks, embeddings, indices):
     return chunks[best]
 
 
-def run(input_path, n_clusters, embedder, model_name, mode):
+def run(input_path, n_clusters, embedder, model_name, mode, save_report=None):
     chunks = get_chunks(input_path, mode)
     print(f"Embedder: {embedder}\n")
 
@@ -153,6 +154,7 @@ def run(input_path, n_clusters, embedder, model_name, mode):
         clusters[label].append(idx)
 
     print(f"\nFormed {len(clusters)} theme clusters:\n")
+    report = []
     for label in sorted(clusters):
         indices = clusters[label]
         cluster_texts = [chunks[i]["text"] for i in indices]
@@ -165,6 +167,19 @@ def run(input_path, n_clusters, embedder, model_name, mode):
         print(f"Representative excerpt: {excerpt}...")
         print()
 
+        report.append({
+            "cluster_id": int(label),
+            "size": len(indices),
+            "keywords": keywords,
+            "representative_excerpt": rep["text"][:600],
+            "all_texts": cluster_texts,
+        })
+
+    if save_report:
+        with open(save_report, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+        print(f"Saved structured cluster report to {save_report}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -175,5 +190,6 @@ if __name__ == "__main__":
     parser.add_argument("--model", default="all-MiniLM-L6-v2", help="sentence-transformers model name (sbert only)")
     parser.add_argument("--mode", choices=["raw", "qa"], default="raw",
                          help="raw = any pasted text, no markers needed (default). qa = structured JSON export")
+    parser.add_argument("--save-report", help="Path to save structured cluster JSON for the outline generation stage")
     args = parser.parse_args()
-    run(args.input, args.n_clusters, args.embedder, args.model, args.mode)
+    run(args.input, args.n_clusters, args.embedder, args.model, args.mode, args.save_report)
