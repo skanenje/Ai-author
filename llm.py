@@ -29,7 +29,7 @@ def generate_text(prompt, system_prompt="You are a helpful assistant."):
         ],
         # OpenRouter optional headers for rankings (good practice)
         extra_headers={
-            "HTTP-Referer": "https://github.com/Ai-author", 
+            "HTTP-Referer": "https://github.com/skanenje/Ai-author", 
             "X-Title": "AI Book Builder"
         }
     )

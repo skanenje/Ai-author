@@ -11,18 +11,10 @@ Convert long AI conversations into structured nonfiction book material.
 ## Setup
 
 ```bash
-conda activate ex00
-cd ~/projects/Ai-author
+git clone https://github.com/skanenje/Ai-author
+cd /Ai-author
 pip install -r requirements.txt
 ```
-
-If `conda activate` fails in a non-interactive shell, call the env python directly:
-
-```bash
-/home/swapo/miniconda3/envs/ex00/bin/python cluster_themes.py --input input.txt --n-clusters 8
-```
-
----
 
 ## Workflow
 
