@@ -1,50 +1,34 @@
 import os
 from dotenv import load_dotenv
-from openai import OpenAI
+from google import genai
 
 # Load variables from .env file
 load_dotenv()
 
 def get_llm_client():
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key or api_key == "your_openrouter_api_key_here":
-        raise ValueError("Please set your OPENROUTER_API_KEY in the .env file")
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key or api_key == "your_gemini_api_key_here":
+        raise ValueError("Please set your GEMINI_API_KEY in the .env file")
         
-    # OpenRouter provides an OpenAI-compatible API
-    client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=api_key,
-    )
+    client = genai.Client(api_key=api_key)
     return client
 
 def generate_text(prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:
     """
     Generate a text response from the LLM based on the given prompt.
-    
-    Args:
-        prompt (str): The user prompt to send to the model.
-        system_prompt (str): The system prompt defining the assistant's behavior.
-        
-    Returns:
-        str: The generated text response.
     """
     client = get_llm_client()
-    model = os.getenv("LLM_MODEL", "meta-llama/llama-3-8b-instruct:free")
+    model = os.getenv("LLM_MODEL", "gemini-2.5-flash")
     
-    response = client.chat.completions.create(
+    response = client.models.generate_content(
         model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ],
-        # OpenRouter optional headers for rankings (good practice)
-        extra_headers={
-            "HTTP-Referer": "https://github.com/skanenje/Ai-author", 
-            "X-Title": "AI Book Builder"
-        }
+        contents=prompt,
+        config=genai.types.GenerateContentConfig(
+            system_instruction=system_prompt,
+        )
     )
     
-    return response.choices[0].message.content
+    return response.text
 
 if __name__ == "__main__":
     # Test the connection when you run this file directly

@@ -6,3 +6,4 @@ python-dotenv
 openai
 anthropic
 requests
+google-genai
