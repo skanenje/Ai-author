@@ -17,7 +17,17 @@ def get_llm_client():
     )
     return client
 
-def generate_text(prompt, system_prompt="You are a helpful assistant."):
+def generate_text(prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:
+    """
+    Generate a text response from the LLM based on the given prompt.
+    
+    Args:
+        prompt (str): The user prompt to send to the model.
+        system_prompt (str): The system prompt defining the assistant's behavior.
+        
+    Returns:
+        str: The generated text response.
+    """
     client = get_llm_client()
     model = os.getenv("LLM_MODEL", "meta-llama/llama-3-8b-instruct:free")
     
