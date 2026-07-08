@@ -3,4 +3,6 @@ numpy>=1.26
 sentence-transformers>=3.0
 # Dependencies for LLM Generation (Phase 2)
 python-dotenv
-
+openai
+anthropic
+requests
