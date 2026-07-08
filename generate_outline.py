@@ -37,10 +37,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ANTHROPIC_MODEL = "claude-sonnet-5"
-# openrouter/free auto-selects from currently available free models -
-# specific free model IDs on OpenRouter reportedly churn weekly, so this
-# is more robust than hardcoding a slug that might vanish. Override with
-# --model if you want a specific one (check openrouter.ai/models first).
+GEMINI_MODEL = "gemini-2.5-flash"
 OPENROUTER_MODEL = "openrouter/free"
 
 SYSTEM_PROMPT = """You are an expert book editor and structural writing \
@@ -155,6 +152,25 @@ def call_anthropic(system_prompt, user_prompt, model):
     return "".join(block.text for block in response.content if block.type == "text")
 
 
+def call_gemini(system_prompt, user_prompt, model):
+    import os
+    from google import genai
+    
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("Set GEMINI_API_KEY in your environment first.")
+        
+    client = genai.Client(api_key=api_key)
+    
+    response = client.models.generate_content(
+        model=model,
+        contents=user_prompt,
+        config=genai.types.GenerateContentConfig(
+            system_instruction=system_prompt,
+        )
+    )
+    return response.text
+
 def call_openrouter(system_prompt, user_prompt, model):
     import os
     import requests
@@ -194,7 +210,9 @@ def generate_outline(report_path, objective, book_type, audience_hint, out_path,
         print(f"\n(--dry-run: no API call made, would use provider={provider}, model={model})")
         return
 
-    if provider == "openrouter":
+    if provider == "gemini":
+        raw_text = call_gemini(SYSTEM_PROMPT, user_prompt, model)
+    elif provider == "openrouter":
         raw_text = call_openrouter(SYSTEM_PROMPT, user_prompt, model)
     else:
         raw_text = call_anthropic(SYSTEM_PROMPT, user_prompt, model)
@@ -232,7 +250,7 @@ if __name__ == "__main__":
     parser.add_argument("--audience", default=None, help="Describe the intended reader (falls back to BOOK_AUDIENCE in .env)")
     parser.add_argument("--out", default="outline.json", help="Where to save the generated outline")
     parser.add_argument("--dry-run", action="store_true", help="Print the prompt without calling the API")
-    parser.add_argument("--provider", choices=["openrouter", "anthropic"], default="openrouter")
+    parser.add_argument("--provider", choices=["gemini", "openrouter", "anthropic"], default="gemini")
     parser.add_argument("--model", default=None, help="Override the default model for the chosen provider")
     args = parser.parse_args()
 
@@ -245,5 +263,15 @@ if __name__ == "__main__":
         print("Error: No objective provided. Set BOOK_OBJECTIVE in .env or pass --objective.")
         raise SystemExit(1)
 
-    model = args.model or (OPENROUTER_MODEL if args.provider == "openrouter" else ANTHROPIC_MODEL)
+    # Select model based on provider if not overridden
+    if not args.model:
+        if args.provider == "gemini":
+            model = GEMINI_MODEL
+        elif args.provider == "openrouter":
+            model = OPENROUTER_MODEL
+        else:
+            model = ANTHROPIC_MODEL
+    else:
+        model = args.model
+
     generate_outline(args.report, objective, book_type, audience, args.out, args.dry_run, args.provider, model)
