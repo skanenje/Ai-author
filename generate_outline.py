@@ -30,7 +30,11 @@ Usage:
 
 import argparse
 import json
+import os
 import re
+
+from dotenv import load_dotenv
+load_dotenv()
 
 ANTHROPIC_MODEL = "claude-sonnet-5"
 # openrouter/free auto-selects from currently available free models -
@@ -223,14 +227,23 @@ def generate_outline(report_path, objective, book_type, audience_hint, out_path,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--report", required=True, help="Path to cluster_themes.py --save-report JSON output")
-    parser.add_argument("--objective", required=True, help="One-paragraph thesis/goal statement for the book")
-    parser.add_argument("--book-type", default="educational nonfiction", help="e.g. 'educational', 'research monograph'")
-    parser.add_argument("--audience", default=None, help="Optional: describe the intended reader")
+    parser.add_argument("--objective", default=None, help="One-paragraph thesis/goal statement (falls back to BOOK_OBJECTIVE in .env)")
+    parser.add_argument("--book-type", default=None, help="e.g. 'educational', 'research monograph' (falls back to BOOK_TYPE in .env)")
+    parser.add_argument("--audience", default=None, help="Describe the intended reader (falls back to BOOK_AUDIENCE in .env)")
     parser.add_argument("--out", default="outline.json", help="Where to save the generated outline")
     parser.add_argument("--dry-run", action="store_true", help="Print the prompt without calling the API")
     parser.add_argument("--provider", choices=["openrouter", "anthropic"], default="openrouter")
     parser.add_argument("--model", default=None, help="Override the default model for the chosen provider")
     args = parser.parse_args()
 
+    # Fall back to .env values if not provided on CLI
+    objective = args.objective or os.getenv("BOOK_OBJECTIVE", "")
+    book_type = args.book_type or os.getenv("BOOK_TYPE", "educational nonfiction")
+    audience = args.audience or os.getenv("BOOK_AUDIENCE", None)
+
+    if not objective:
+        print("Error: No objective provided. Set BOOK_OBJECTIVE in .env or pass --objective.")
+        raise SystemExit(1)
+
     model = args.model or (OPENROUTER_MODEL if args.provider == "openrouter" else ANTHROPIC_MODEL)
-    generate_outline(args.report, args.objective, args.book_type, args.audience, args.out, args.dry_run, args.provider, model)
+    generate_outline(args.report, objective, book_type, audience, args.out, args.dry_run, args.provider, model)
